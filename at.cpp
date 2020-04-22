@@ -6,9 +6,9 @@
 
 #include "utils.h"
 
-const auto nruns    = 5'000'000;
+const auto nruns    = 1'000'000;
 const auto val      = 100;
-const auto nthreads = 4;
+const auto nthr_max = 4;
 
 std::atomic<int> atvar(0);
 int exptd = 0;
@@ -19,6 +19,7 @@ int loaded = 0;
 struct avgtime_val {
     std::string atop_name;
     std::string MESI_state;
+    int nthr;
     double time;
 };
 
@@ -31,7 +32,7 @@ std::atomic<bool> prepflag(false);
 
 using time_units = std::chrono::nanoseconds;
 
-barrier barr(nthreads);
+barrier barr;
 
 //
 // Atomic operations:
@@ -64,37 +65,59 @@ inline void store()
 
 // output: Print elapsed / avg time
 void output(double sumtime, const std::string &atop_name, 
-            const std::string &MESI_state, int ithr)
+            const std::string &MESI_state, int nthr, int ithr)
 {
     auto avgtime = sumtime / nruns;
 
     std::lock_guard<std::mutex> lock(mut);
 
-    std::string key = atop_name + MESI_state;
+    std::string key = std::to_string(nthr) + atop_name + MESI_state;
 
     auto search = avgtime_sum.find(key);
     
     if (search == avgtime_sum.end()) {
-        avgtime_val val{atop_name, MESI_state, avgtime};
+        avgtime_val val{atop_name, MESI_state, nthr, avgtime};
         std::pair<std::string, avgtime_val> elem(key, val);
         avgtime_sum.insert(elem);
     } else {
         auto avgtime_prev = search->second.time;
-        avgtime_val val{atop_name, MESI_state, avgtime_prev + avgtime};
+        avgtime_val val{atop_name, MESI_state, nthr, avgtime_prev + avgtime};
         search->second = val;
     }
 
     // std::cout << "THREAD " << ithr << ": Elapsed time (" << MESI_state << ")"
     //           << sumtime << std::endl;
 
-    std::cout << "THREAD " << ithr << ": Avg time (" << MESI_state << ") " 
-              << avgtime << std::endl;
+    std::cout << "nthr " << nthr << " ithr " << ithr << " " << atop_name 
+              << " MESI state " << MESI_state << ": " << avgtime << std::endl;
+}
+
+// meas_simple: Measure without specified MESI state
+void meas_simple(void (*atop)(void), const std::string &atop_name, 
+                 int nthr, int ithr)
+{
+    auto get_time = std::chrono::steady_clock::now;
+    decltype(get_time()) start, end;
+    double sumtime = 0;
+
+    for (auto i = 0; i < nruns; i++) {
+        start = get_time();
+        atop();
+        end = get_time();
+
+        auto elapsed = std::chrono::duration_cast
+             <time_units>(end - start).count();
+        sumtime += elapsed;
+    }
+    
+    output(sumtime, atop_name, "X", nthr, ithr);
 }
 
 // meas_M: Measure Modified state
 // Template variant works slow for -O0
 // void meas_M(std::function<void(void)> atop)
-void meas_M(void (*atop)(void), const std::string &atop_name, int ithr)
+void meas_M(void (*atop)(void), const std::string &atop_name, 
+            int nthr, int ithr)
 {
     auto get_time = std::chrono::steady_clock::now;
     decltype(get_time()) start, end;
@@ -113,13 +136,14 @@ void meas_M(void (*atop)(void), const std::string &atop_name, int ithr)
         sumtime += elapsed;
     }
     
-    output(sumtime, atop_name, "M", ithr);
+    output(sumtime, atop_name, "M", nthr, ithr);
 }
 
 // meas_M: Measure Invalid state
 // Template variant works slow for -O0
 // void meas_I(std::function<void(void)> atop) 
-void meas_I(void (*atop)(void), const std::string &atop_name, int ithr)
+void meas_I(void (*atop)(void), const std::string &atop_name, 
+            int nthr, int ithr)
 {
     auto get_time = std::chrono::steady_clock::now;
     decltype(get_time()) start, end;
@@ -139,7 +163,7 @@ void meas_I(void (*atop)(void), const std::string &atop_name, int ithr)
         prepflag.store(true);
     }
 
-    output(sumtime, atop_name, "I", ithr);
+    output(sumtime, atop_name, "I", nthr, ithr);
 }
 
 // prep_I: Set Invalid state
@@ -154,34 +178,39 @@ void prep_I()
 
 // make_measurements: Perform experiments for one atomic operation
 void make_measurements(void (*atop)(void), const std::string &atop_name, 
-                       int ithr)
+                       int nthr, int ithr)
 {
-    std::cout << "thr " << ithr << std::endl;
-
     barr.wait();
 
-    meas_M(atop, atop_name, ithr);
+    meas_simple(atop, atop_name, nthr, ithr);
 
-    barr.wait();
-    
-    std::thread meas_I_thr(meas_I, atop, atop_name, ithr), 
-                prep_I_thr(prep_I);
+    // meas_M(atop, atop_name, nthr, ithr);
 
-    meas_I_thr.join();
-    prep_I_thr.join();
+    // barr.wait();
+    // 
+    // std::thread meas_I_thr(meas_I, atop, atop_name, nthr, ithr), 
+    //             prep_I_thr(prep_I);
+
+    // meas_I_thr.join();
+    // prep_I_thr.join();
 }
 
 // output_global: 
 void output_global()
 {
+    std::cout << "=====================================" << std::endl;
     std::cout << "TOTAL output:" << std::endl;
+    std::cout << "=====================================" << std::endl;
 
     for (auto &elem: avgtime_sum) {
         auto atop_name = elem.second.atop_name;
         auto MESI_state = elem.second.MESI_state;
         auto avgtime = elem.second.time;
-        std::cout << atop_name << " " << MESI_state 
-                  << " " << avgtime << std::endl;
+        auto nthr = elem.second.nthr;
+        avgtime /= elem.second.nthr;
+
+        std::cout << "NTHR " << nthr << " " << atop_name << " " 
+                  << MESI_state << " " << avgtime << std::endl;
     }
 }
 
@@ -192,23 +221,30 @@ int main(int argc, const char *argv[])
         {"CAS", CAS}, {"SWAP", SWAP}, {"FAA", FAA}, 
         {"load", load}, {"store", store}};
 
-    for (auto &atop_item: atops) {
-        std::string atop_name = atop_item.first;
-        void (*atop)(void) = atop_item.second;
+    for (auto nthr = 1; nthr < nthr_max; nthr++) {
+        std::cout << "Number of threads: " << nthr << std::endl;
+        barr.init(nthr);
 
-        std::vector<std::thread> meas_threads;
+        for (auto &atop_item: atops) {
+            std::string atop_name = atop_item.first;
+            void (*atop)(void) = atop_item.second;
 
-        for (auto ithr = 0; ithr < nthreads; ithr++) {
-            std::thread thr(make_measurements, atop, atop_name, ithr);
-            meas_threads.emplace_back(std::move(thr));
+            std::cout << atop_name << std::endl;
+
+            std::vector<std::thread> meas_threads;
+
+            for (auto ithr = 0; ithr < nthr; ithr++) {
+                std::thread thr(make_measurements, atop, atop_name, nthr, ithr);
+                meas_threads.emplace_back(std::move(thr));
+            }
+
+            for (auto &thr: meas_threads) {
+                thr.join();
+            }
         }
-
-        for (auto &thr: meas_threads) {
-            thr.join();
-        }
-
-        output_global();
     }
+
+    output_global();
 
     return 0;
 }

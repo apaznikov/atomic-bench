@@ -12,12 +12,20 @@
 class barrier
 {
 public:
-    barrier(int count): thread_count(count)
-    {}
+    barrier() {}
+
+    barrier(int count): thread_count(count) {}
+
+    void init(int count)
+    {
+        std::unique_lock<std::mutex> lk(mut);
+        thread_count = count;
+        counter = waiting = 0;
+    }
 
     void wait()
     {
-        //fence mechanism
+        // fence mechanism
         std::unique_lock<std::mutex> lk(mut);
         ++counter;
         ++waiting;
@@ -27,11 +35,9 @@ public:
         --waiting;
 
         if (waiting == 0) {
-            //reset barrier
+            // reset barrier
             counter = 0;
         }
-
-        lk.unlock();
     }
 
 private:
@@ -40,5 +46,5 @@ private:
 
     int counter = 0;
     int waiting = 0;
-    int thread_count;
+    int thread_count = 0;
 };
