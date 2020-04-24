@@ -14,7 +14,7 @@
 
 #include "utils.h"
 
-const auto nruns    = 1'000'000;
+const auto nruns    = 10'000'000;
 const auto nthr_max = 100;
 
 const auto padding_size = 100'000;
@@ -609,20 +609,30 @@ void output_global()
         if ((test_type == "contention_shared") || 
             (test_type == "contention_notshared")) {
 
-            std::string cont_fname = "data/" + test_type + "-" + atop_name + ".dat";
+            std::string fname = "data/" + test_type + "-" 
+                                     + atop_name + ".dat";
 
-            std::ifstream check_file(cont_fname);
-            std::fstream cont_file(cont_fname, 
-                                   std::fstream::out | std::fstream::app);
+            std::ifstream check_file(fname);
+            std::fstream ofile(fname, std::fstream::out | std::fstream::app);
 
             if (!check_file.good()) {
-                cont_file << "nthr\ttime\n";
+                ofile << "nthr\ttime\n";
             }
 
-            cont_file << nthr << "\t" << avgtime << std::endl;
+            ofile << nthr << "\t" << avgtime << std::endl;
 
             check_file.close();
-            cont_file.close();
+            ofile.close();
+        } else if (test_type == "MESI") {
+
+            std::string fname = "data/" + test_type + "-"
+                                + MESI_state + ".dat";
+
+            std::fstream ofile(fname, std::fstream::out | std::fstream::app);
+
+            ofile << atop_name << "\t" << avgtime << std::endl;
+
+            ofile.close();
         }
     }
 }
