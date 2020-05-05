@@ -1,3 +1,10 @@
 at
-stdout
+stdout*
 *.swp
+old
+backup
+data
+graphs/data
+graphs/img
+*.o*
+data*

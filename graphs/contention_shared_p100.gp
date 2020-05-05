@@ -13,22 +13,22 @@ set xrange [ 1 : 100 ] noreverse writeback
 
 set border lw 3
 set grid lw 2.5
-set pointsize 1.0
+set pointsize 2.0
 
-plot "./data/contention_shared-CAS.dat" using 1:2 \
+plot "./data/contention_shared-CAS-p100.dat" using 1:2 \
      ti "CAS" with lp lw 3 pt 5 lc rgb '#C40D28', \
      \
-     "./data/contention_shared-unCAS.dat" using 1:2 \
+     "./data/contention_shared-unCAS-p100.dat" using 1:2 \
      ti "unCAS" with lp dt "_" lw 3 pt 9 lc rgb '#007BCC', \
      \
-     "./data/contention_shared-SWAP.dat" using 1:2 \
+     "./data/contention_shared-SWAP-p100.dat" using 1:2 \
      ti "SWAP" with lp dt "_.." lw 3 pt 8 lc rgb '#d9138a', \
      \
-     "./data/contention_shared-FAA.dat" using 1:2 \
+     "./data/contention_shared-FAA-p100.dat" using 1:2 \
      ti "FAA" with lp dt "-_" lw 3 pt 2 lc rgb '#f3ca20', \
      \
-     "./data/contention_shared-load.dat" using 1:2 \
+     "./data/contention_shared-load-p100.dat" using 1:2 \
      ti "load" with lp dt "-." lw 3 pt 7 lc rgb '#500472', \
      \
-     "./data/contention_shared-store.dat" using 1:2 \
+     "./data/contention_shared-store-p100.dat" using 1:2 \
      ti "store" with lp dt "-" lw 3 pt 4 lc rgb '#ff6e40'

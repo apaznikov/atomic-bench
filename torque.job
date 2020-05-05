@@ -1,0 +1,10 @@
+#PBS -N test
+#PBS -l nodes=1:ppn=8
+#PBS -l walltime=10:00:00
+#PBS -q release
+#PBS -j oe
+#PBS -o stdout
+
+cd $PBS_O_WORKDIR
+
+./run.sh

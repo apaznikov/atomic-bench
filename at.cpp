@@ -14,10 +14,13 @@
 
 #include "utils.h"
 
-const auto nruns    = 10'000'000;
-const auto nthr_max = 100;
+const auto nruns         = 500'000;
+const auto nthr_max      = 8;
+const auto nthr_interval = 1;
 
 const auto padding_size = 100'000;
+
+auto get_time = std::chrono::high_resolution_clock::now;
 
 // Atomic variables with padding
 struct atvar_pad {
@@ -146,7 +149,6 @@ void output(double sumtime, const std::string &atop_name,
 void meas_simple_shared(void (*atop)(int), const std::string &atop_name, 
                         int nthr, const std::string &test_type)
 {
-    auto get_time = std::chrono::steady_clock::now;
     decltype(get_time()) start, end;
     double sumtime = 0;
 
@@ -174,7 +176,6 @@ void meas_simple_shared(void (*atop)(int), const std::string &atop_name,
 void meas_simple_notshared(void (*atop)(int), const std::string &atop_name, 
                            int nthr, int ithr, const std::string &test_type)
 {
-    auto get_time = std::chrono::steady_clock::now;
     decltype(get_time()) start, end;
     double sumtime = 0;
 
@@ -205,7 +206,6 @@ void meas_M(void (*atop)(int), const std::string &atop_name,
 {
     affin_ready_fut.wait();
 
-    auto get_time = std::chrono::steady_clock::now;
     decltype(get_time()) start, end;
     double sumtime = 0;
 
@@ -241,7 +241,6 @@ void meas_E(void (*atop)(int), const std::string &atop_name,
 {
     affin_ready_fut.wait();
 
-    auto get_time = std::chrono::steady_clock::now;
     decltype(get_time()) start, end;
     double sumtime = 0;
 
@@ -308,7 +307,6 @@ void meas_I(void (*atop)(int), const std::string &atop_name,
 {
     affin_ready_fut.wait();
 
-    auto get_time = std::chrono::steady_clock::now;
     decltype(get_time()) start, end;
     double sumtime = 0;
 
@@ -372,7 +370,6 @@ void meas_S(void (*atop)(int), const std::string &atop_name,
 {
     affin_ready_fut.wait();
 
-    auto get_time = std::chrono::steady_clock::now;
     decltype(get_time()) start, end;
     double sumtime = 0;
 
@@ -633,8 +630,11 @@ void output_global()
             ofile << atop_name << "\t" << avgtime << std::endl;
 
             ofile.close();
+
         }
     }
+
+    avgtime_sum.clear();
 }
 
 int main(int argc, const char *argv[])
@@ -647,7 +647,7 @@ int main(int argc, const char *argv[])
     alloc_mem(nthr_max);
 
     // Contention measurements for different thread number
-    for (auto nthr = 1; nthr <= nthr_max; nthr++) {
+    for (auto nthr = 1; nthr <= nthr_max; nthr += nthr_interval) {
 
         std::cout << "Number of threads: " << nthr << std::endl;
         barr.init(nthr);
@@ -669,6 +669,8 @@ int main(int argc, const char *argv[])
                 thr.join();
             }
         }
+
+        output_global();
     }
 
     // Measurements for different MESI state (number of threads is 1)
@@ -679,11 +681,11 @@ int main(int argc, const char *argv[])
         std::cout << atop_name << std::endl;
 
         make_MESI_meas(atop, atop_name);
+
+        output_global();
     }
 
     free_mem();
-
-    output_global();
 
     return 0;
 }
