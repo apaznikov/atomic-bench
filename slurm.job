@@ -1,8 +1,7 @@
 #!/bin/bash
 
-#SBATCH --job-name=test --nodes=1 --ntasks-per-node=8
-#SBATCH --time=9:00:00
-#SBATCH --partition=release
+#SBATCH --job-name=test --nodes=1 --ntasks-per-node=12
+#SBATCH --time=12:00:00
 #SBATCH --output=stdout
 
 #export SLURM_NNODES=6

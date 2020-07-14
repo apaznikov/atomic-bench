@@ -13,7 +13,7 @@ set xrange [ 1 : 100 ] noreverse writeback
 
 set border lw 3
 set grid lw 2.5
-set pointsize 2.0
+set pointsize 1.0
 
 plot "./data/contention_shared-CAS-p100.dat" using 1:2 \
      ti "CAS" with lp lw 3 pt 5 lc rgb '#C40D28', \
