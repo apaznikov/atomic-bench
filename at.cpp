@@ -4,6 +4,10 @@
 // (C) 2020 Alexey Paznikov <apaznikov@gmail.com>
 //
 
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #include <iostream>
 #include <thread>
 #include <atomic>
@@ -13,13 +17,14 @@
 #include <vector>
 #include <random>
 #include <algorithm>
+
 #include <unistd.h>
 
 #include "utils.h"
 
-// #define CONT_MEAS_ENABLE
-// #define DELAY_MEAS_ENABLE
-// #define MESI_MEAS_ENABLE
+#define CONT_MEAS_ENABLE
+#define DELAY_MEAS_ENABLE
+#define MESI_MEAS_ENABLE
 #define ARRAY_MEAS_ENABLE
 
 const auto nruns      = 10'000;
@@ -32,14 +37,14 @@ const auto delay_min  = 0;
 // const auto delay_max  = 10000000;
 // const auto delay_step = 500000;
 const auto delay_max  = 3000;
-const auto delay_step = 10;
+const auto delay_step = 1000;
 
 const auto stride_min = 0;
 const auto stride_max = 100;
 const auto stride_step = 20;
 
 // const std::vector<int> delay_nthr{2, 4, 8, 16, 32, 64};
-const std::vector<int> delay_nthr{16, 32, 64};
+const std::array<int, 3> delay_nthr{16, 32, 64};
 
 const auto padding_size = 100'000;
 
@@ -65,16 +70,18 @@ struct var_pad {
 };
 
 // Make all variables used within threads thread-local
-// TODO replace with array
-// std::array<std::atomic<int>, nthr_max> atarr;
+constexpr int nthr_glob = 
+    std::max(*std::max_element(delay_nthr.begin(), 
+                               delay_nthr.end()), nthr_max);
 
-atvar_pad *atarr = nullptr;
+//atvar_pad *atarr = nullptr;
+std::array<atvar_pad, nthr_glob> atarr;
 
-var_pad *exptd = nullptr;
-var_pad *des = nullptr;
-var_pad *des2 = nullptr;
-var_pad *loaded = nullptr;
-var_pad *val = nullptr;
+std::array<var_pad, nthr_glob> exptd;
+std::array<var_pad, nthr_glob> des;
+std::array<var_pad, nthr_glob> des2;
+std::array<var_pad, nthr_glob> loaded;
+std::array<var_pad, nthr_glob> val;
 
 std::array<std::array<std::atomic<int>, atbuf_size>, nthr_max> atbuf;
 
@@ -229,16 +236,17 @@ void output(double sumtime, const std::string &atop_name,
 
 // TODO combine _shared and _notshared into one
 
-// meas_simple_shared: Measure without specified MESI state
-//                     All threads use one shared atomic variable
-void meas_simple_shared(void (*atop)(int), const std::string &atop_name, 
-                        int nthr, int delay, const std::string &test_type)
+// meas_simple: Measure without specified MESI state
+void meas_simple(void (*atop)(int), const std::string &atop_name, 
+                 int nthr, int ithr, int delay, const std::string &test_type)
 {
     decltype(get_time()) start, end;
     double sumtime = 0;
 
-    // All threads access to one 0th atomic variable
-    const auto ithr = 0;
+    if ((test_type == "delay_shared") || (test_type == "contention_shared")) {
+        // All threads access to one 0th atomic variable
+        ithr = 0;
+    }
 
     for (auto i = 0; i < nruns; i++) {
         start = get_time();
@@ -260,39 +268,16 @@ void meas_simple_shared(void (*atop)(int), const std::string &atop_name,
         for (auto j = 0; j < delay; j++);
     }
     
-    output(sumtime, atop_name, "X1", nthr, ithr, delay, 0, test_type);
-}
+    const auto stride = 0;
 
-// meas_simple_notshared: Measure without specified MESI state
-//                        Threads access separate thread-local atomic variables
-void meas_simple_notshared(void (*atop)(int), const std::string &atop_name, 
-                           int nthr, int ithr, int delay, 
-                           const std::string &test_type)
-{
-    decltype(get_time()) start, end;
-    double sumtime = 0;
-
-    for (auto i = 0; i < nruns; i++) {
-        start = get_time();
-        atop(ithr);
-        end = get_time();
-        
-        // Restore atomic variable
-        atarr[ithr].atvar = atvar_def;
-
-        auto elapsed = std::chrono::duration_cast
-             <time_units>(end - start).count();
-        sumtime += elapsed;
-
-        // Strange, but calling a function (instead for-loop) decreases 
-        // the latency of atomic operations, making it equal for all delays
-        // dodelay(delay);
-
-        // Loop making a delay
-        for (auto j = 0; j < delay; j++);
-    }
-    
-    output(sumtime, atop_name, "X2", nthr, ithr, delay, 0, test_type);
+    if (test_type == "delay_shared") 
+        output(sumtime, atop_name, "DS", nthr, ithr, delay, stride, test_type);
+    else if (test_type == "delay_notshared") 
+        output(sumtime, atop_name, "DN", nthr, ithr, delay, stride, test_type);
+    else if (test_type == "contention_shared") 
+        output(sumtime, atop_name, "CS", nthr, ithr, delay, stride, test_type);
+    else if (test_type == "contention_notshared") 
+        output(sumtime, atop_name, "CN", nthr, ithr, delay, stride, test_type);
 }
 
 ///////////////////////////////////////////////////////////
@@ -544,11 +529,11 @@ void make_cont_meas(void (*atop)(int), const std::string &atop_name,
     barr.wait();
 
     const auto delay = 0;
-    meas_simple_shared(atop, atop_name, nthr, delay, 
-                       "contention_shared");
+    meas_simple(atop, atop_name, nthr, ithr, delay, 
+                "contention_shared");
 
-    meas_simple_notshared(atop, atop_name, nthr, ithr, delay,
-                          "contention_notshared");
+    meas_simple(atop, atop_name, nthr, ithr, delay,
+                "contention_notshared");
 }
 
 // make_cont_meas: Experiments for contention measurements
@@ -559,8 +544,8 @@ void make_delay_meas(void (*atop)(int), const std::string &atop_name,
 {
     barr.wait();
 
-    meas_simple_shared(atop, atop_name, nthr, delay, 
-                       "delay_shared");
+    meas_simple(atop, atop_name, nthr, ithr, delay, 
+                "delay_shared");
 
     // meas_simple_notshared(atop, atop_name, nthr, ithr, delay,
     //                       "delay_notshared");
@@ -685,15 +670,15 @@ void make_MESI_meas(void (*atop)(int), const std::string &atop_name)
 //                 Array-based measurements
 ///////////////////////////////////////////////////////////
 
-// meas_arr: Array-based measurements
-void meas_arr(void (*atop)(int, int), const std::string &atop_name, 
+// meas_buf: Array-based measurements
+void meas_buf(void (*atop)(int, int), const std::string &atop_name, 
               int nthr, int ithr, int delay, int stride, 
               const std::string &test_type)
 {
     decltype(get_time()) start, end;
     double sumtime = 0;
 
-    if (test_type == "array_shared") {
+    if (test_type == "buf_shared") {
         // All threads access to one 0th atomic variable
         ithr = 0;
     }
@@ -718,22 +703,22 @@ void meas_arr(void (*atop)(int, int), const std::string &atop_name,
         for (auto j = 0; j < delay; j++);
     }
     
-    if (test_type == "array_shared") 
+    if (test_type == "buf_shared") 
         output(sumtime, atop_name, "A1", nthr, ithr, delay, stride, test_type);
     else
         output(sumtime, atop_name, "A2", nthr, ithr, delay, stride, test_type);
 }
 
-// make_arr_meas: Experiments for array-based throughput measurements
+// make_buf_meas: Experiments for array-based throughput measurements
 //                For different access patterns
-void make_arr_meas(void (*atop)(int, int), const std::string &atop_name, 
+void make_buf_meas(void (*atop)(int, int), const std::string &atop_name, 
                     int nthr, int ithr, int delay, int stride)
 {
     barr.wait();
 
-    meas_arr(atop, atop_name, nthr, ithr, delay, stride, "array_shared");
+    meas_buf(atop, atop_name, nthr, ithr, delay, stride, "buf_shared");
 
-    meas_arr(atop, atop_name, nthr, ithr, delay, stride, "array_notshared");
+    meas_buf(atop, atop_name, nthr, ithr, delay, stride, "buf_notshared");
 }
 
 ///////////////////////////////////////////////////////////
@@ -743,22 +728,6 @@ void make_arr_meas(void (*atop)(int, int), const std::string &atop_name,
 // alloc_mem: Allocate all padded arrays
 void alloc_mem(int nthr, int nthr_arr)
 {
-    // Array of atomic variables with paddings
-    atarr = new atvar_pad[nthr];
-
-    // Arrays of common variables with paddings
-    exptd = new var_pad[nthr];
-    des = new var_pad[nthr];
-    des2 = new var_pad[nthr];
-    loaded = new var_pad[nthr];
-    val = new var_pad[nthr];
-
-    if ((atarr == nullptr) || (exptd == nullptr) || (des == nullptr) ||
-        (loaded == nullptr) || (val == nullptr)) {
-        std::cerr << "Can't allocate memory" << std::endl;
-        exit(1);
-    }
-
     for (auto i = 0; i < nthr; i++) {
         atarr[i].atvar = atvar_def;
         exptd[i].var = exptd_def;
@@ -768,22 +737,9 @@ void alloc_mem(int nthr, int nthr_arr)
 
     }
 
-    for (auto i = 0; i < nthr_arr; i++) {
-        for (auto j = 0; j < atbuf_size; j++) {
-            atbuf[i][j] = atvar_def;
-        }
+    for (auto i = 0u; i < atbuf.size(); i++) {
+        std::fill(std::begin(atbuf[i]), std::end(atbuf[i]), atvar_def);
     }
-}
-
-// free_mem: Free all padded arrays
-void free_mem()
-{
-    delete[] atarr;
-    delete[] exptd;
-    delete[] des;
-    delete[] des2;
-    delete[] loaded;
-    delete[] val;
 }
 
 // output_global: 
@@ -981,7 +937,7 @@ int main(int argc, const char *argv[])
 
     // Array-based measurements for different access patterns
     std::cout << "-------------------------------------" << std::endl;
-    std::cout << "ARRAY MEASUREMENTS\n";
+    std::cout << "BUFFER (ARRAY) MEASUREMENTS\n";
     std::cout << "-------------------------------------" << std::endl;
 
     for (auto nthr = nthr_min; nthr <= nthr_max; nthr += nthr_step) {
@@ -1004,7 +960,7 @@ int main(int argc, const char *argv[])
                 // Launch measurement threads
                 for (auto ithr = 0; ithr < nthr; ithr++) {
                     const auto delay = 0;
-                    std::thread thr(make_arr_meas, atop, atop_name, 
+                    std::thread thr(make_buf_meas, atop, atop_name, 
                                     nthr, ithr, delay, stride);
                     set_affinity_by_tid(thr, ithr);
                     meas_threads.emplace_back(std::move(thr));
@@ -1014,13 +970,13 @@ int main(int argc, const char *argv[])
                     thr.join();
                 }
             }
-        }
 
-        output_global();
+            output_global();
+        }
     }
 #endif
 
-    free_mem();
+    //free_mem();
 
     return 0;
 }
