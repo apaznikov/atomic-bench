@@ -22,15 +22,16 @@
 
 #include "utils.h"
 
-#define CONT_MEAS_ENABLE
-#define DELAY_MEAS_ENABLE
-#define MESI_MEAS_ENABLE
-#define ARRAY_MEAS_ENABLE
+//#define CONT_MEAS_ENABLE
+//#define DELAY_MEAS_ENABLE
+//#define MESI_MEAS_ENABLE
+//#define ARRAY_MEAS_ENABLE
+#define BARRIER_MEAS_ENABLE
 
-const auto nruns      = 10'000;
+const auto nruns      = 1'000;
 
 const auto nthr_min   = 4;
-const auto nthr_max   = 10;
+const auto nthr_max   = 12;
 const auto nthr_step  = 4;
 
 const auto delay_min  = 0;
@@ -118,9 +119,9 @@ const auto prep_cpu = 2;
 
 auto get_time = std::chrono::steady_clock::now;
 
-//
-// Atomic operations (scalar):
-//
+///////////////////////////////////////////////////////////
+//                 Atomic operations (scalar)
+///////////////////////////////////////////////////////////
 
 // CAS: successful CAS
 inline void CAS(int ithr)
@@ -154,9 +155,9 @@ inline void store(int ithr)
     atarr[ithr].atvar.store(des[ithr].var);
 }
 
-//
-// Atomic operations (vector):
-//
+///////////////////////////////////////////////////////////
+//                 Atomic operations (buffer)
+///////////////////////////////////////////////////////////
 
 // CAS: successful CAS
 inline void CAS_arr(int ithr, int ind)
@@ -230,7 +231,7 @@ void output(double sumtime, const std::string &atop_name,
     }
 
     std::cout << "nthr " << nthr << " ithr " << ithr << " delay " 
-              << delay << " " << " stride " << stride << atop_name 
+              << delay << " " << " stride " << stride << " " << atop_name 
               << " MESI state " << MESI_state << ": " << avgtime << std::endl;
 }
 
@@ -517,7 +518,7 @@ void prep_S(std::shared_future<void> affin_ready_fut)
 }
 
 ///////////////////////////////////////////////////////////
-//                 Measurement functions
+//                 Contention functions
 ///////////////////////////////////////////////////////////
 
 // make_cont_meas: Experiments for contention measurements
@@ -536,6 +537,10 @@ void make_cont_meas(void (*atop)(int), const std::string &atop_name,
                 "contention_notshared");
 }
 
+///////////////////////////////////////////////////////////
+//                 Delay measurement
+///////////////////////////////////////////////////////////
+
 // make_cont_meas: Experiments for contention measurements
 //                 Many threads make operations with one atomic variables
 //                 (MESI state is undefined)
@@ -551,68 +556,10 @@ void make_delay_meas(void (*atop)(int), const std::string &atop_name,
     //                       "delay_notshared");
 }
 
-// set_affinity: Set affinity for measurement and preparation thread
-//               on different cores
-void set_affinity(std::thread &meas_thr, std::thread &prep_thr)
-{
-    cpu_set_t cpuset;
-    CPU_ZERO(&cpuset);
-    CPU_SET(meas_cpu, &cpuset);
 
-    auto rc = pthread_setaffinity_np(meas_thr.native_handle(),
-                                    sizeof(cpu_set_t), &cpuset);
-
-    if (rc != 0) {
-        std::cerr << "pthread_setaffinity_np() failed" << std::endl;
-        exit(1);
-    }
-
-    CPU_ZERO(&cpuset);
-    CPU_SET(prep_cpu, &cpuset);
-
-    rc = pthread_setaffinity_np(prep_thr.native_handle(),
-                                sizeof(cpu_set_t), &cpuset);
-
-    if (rc != 0) {
-        std::cerr << "pthread_setaffinity_np() failed" << std::endl;
-        exit(1);
-    }
-}
-
-// set_affinity: Set affinity for measurement and preparation thread
-//               on different cores
-void set_affinity(std::thread &meas_thr)
-{
-    cpu_set_t cpuset;
-    CPU_ZERO(&cpuset);
-    CPU_SET(meas_cpu, &cpuset);
-
-    auto rc = pthread_setaffinity_np(meas_thr.native_handle(),
-                                    sizeof(cpu_set_t), &cpuset);
-
-    if (rc != 0) {
-        std::cerr << "pthread_setaffinity_np() failed" << std::endl;
-        exit(1);
-    }
-}
-
-// set_affinity_by_tid: Set affinity for measurement thread by thread id
-void set_affinity_by_tid(std::thread &thr, int tid)
-{
-    cpu_set_t cpuset;
-    CPU_ZERO(&cpuset);
-
-    const auto ncores = std::thread::hardware_concurrency();
-    CPU_SET(tid % ncores, &cpuset);
-
-    auto rc = pthread_setaffinity_np(thr.native_handle(),
-                                     sizeof(cpu_set_t), &cpuset);
-
-    if (rc != 0) {
-        std::cerr << "pthread_setaffinity_np() failed" << std::endl;
-        exit(1);
-    }
-}
+///////////////////////////////////////////////////////////
+//                 MESI measurements
+///////////////////////////////////////////////////////////
 
 // MESI_meas_prep: Make MESI measurement for specified state
 //                 by means of measurement and preparation threads
@@ -630,7 +577,7 @@ void MESI_do_meas(void (*atop)(int), const std::string &atop_name,
     std::thread meas_thr(meas, atop, atop_name, "MESI", affin_ready_fut), 
                 prep_thr(prep, affin_ready_fut);
 
-    set_affinity(meas_thr, prep_thr);
+    set_affinity(meas_thr, prep_thr, meas_cpu, prep_cpu);
 
     affin_ready_promise.set_value();
 
@@ -647,7 +594,7 @@ void MESI_M_do_meas(void (*atop)(int), const std::string &atop_name)
     std::thread meas_thr(meas_M, atop, atop_name, "MESI", 
                          std::ref(affin_ready_fut));
 
-    set_affinity(meas_thr);
+    set_affinity(meas_thr, meas_cpu);
 
     affin_ready_promise.set_value();
 
@@ -678,10 +625,12 @@ void meas_buf(void (*atop)(int, int), const std::string &atop_name,
     decltype(get_time()) start, end;
     double sumtime = 0;
 
-    if (test_type == "buf_shared") {
-        // All threads access to one 0th atomic variable
+    if (stride == 0)
+        stride = 1;
+
+    // All threads access to one 0th atomic variable
+    if (test_type == "buf_shared") 
         ithr = 0;
-    }
 
     auto ind = 0;
 
@@ -722,13 +671,125 @@ void make_buf_meas(void (*atop)(int, int), const std::string &atop_name,
 }
 
 ///////////////////////////////////////////////////////////
-//                 Utils
+//                 Barrier measurements
 ///////////////////////////////////////////////////////////
 
-// alloc_mem: Allocate all padded arrays
-void alloc_mem(int nthr, int nthr_arr)
+// meas_barr: Measure barrier impact
+void meas_barr(void (*atop1)(int), void (*atop2)(int), 
+               const std::string &atop_names,
+               int nthr, int ithr, const std::string &test_type)
 {
-    for (auto i = 0; i < nthr; i++) {
+    decltype(get_time()) start, end;
+    double sumtime = 0;
+
+    if (test_type == "barr_shared") {
+        // All threads access to one 0th atomic variable
+        ithr = 0;
+    }
+
+    for (auto i = 0; i < nruns; i++) {
+        start = get_time();
+        atop1(ithr);
+        asm volatile("mfence" ::: "memory");
+        asm volatile("" ::: "memory");
+        atop2(ithr);
+        end = get_time();
+
+        // Restore atomic variable
+        atarr[ithr].atvar = atvar_def;
+
+        auto elapsed = std::chrono::duration_cast
+             <time_units>(end - start).count();
+        sumtime += elapsed;
+
+        // Strange, but calling a function (instead for-loop) decreases 
+        // the latency of atomic operations, making it equal for all delays
+        // dodelay(delay);
+
+        // Loop making a delay
+        // for (auto j = 0; j < delay; j++);
+    }
+    
+    const auto stride = 0;
+    const auto delay = 0;
+
+    if (test_type == "barr_shared") 
+        output(sumtime, atop_names, "YBS", nthr, ithr, delay, stride, test_type);
+    else if (test_type == "barr_notshared") 
+        output(sumtime, atop_names, "YBN", nthr, ithr, delay, stride, test_type);
+}
+
+// meas_nobarr: Measure barrier impact
+void meas_nobarr(void (*atop1)(int), void (*atop2)(int), 
+                 const std::string &atop_names,
+                 int nthr, int ithr, const std::string &test_type)
+{
+    decltype(get_time()) start, end;
+    double sumtime = 0;
+
+    if (test_type == "nobarr_shared") {
+        // All threads access to one 0th atomic variable
+        ithr = 0;
+    }
+
+    for (auto i = 0; i < nruns; i++) {
+        start = get_time();
+        atop1(ithr);
+        asm volatile("" ::: "memory");
+        atop2(ithr);
+        end = get_time();
+
+        // Restore atomic variable
+        atarr[ithr].atvar = atvar_def;
+
+        auto elapsed = std::chrono::duration_cast
+             <time_units>(end - start).count();
+        sumtime += elapsed;
+
+        // Strange, but calling a function (instead for-loop) decreases 
+        // the latency of atomic operations, making it equal for all delays
+        // dodelay(delay);
+
+        // Loop making a delay
+        // for (auto j = 0; j < delay; j++);
+    }
+    
+    const auto stride = 0;
+    const auto delay = 0;
+
+    if (test_type == "nobarr_shared") 
+        output(sumtime, atop_names, "NBS", nthr, ithr, delay, stride, test_type);
+    else if (test_type == "nobarr_notshared") 
+        output(sumtime, atop_names, "NBN", nthr, ithr, delay, stride, test_type);
+}
+
+// make_barr_meas: Experiments for barrier measurements
+void make_barr_meas(void (*atop1)(int), void (*atop2)(int), 
+                    const std::string &atop_name1, 
+                    const std::string &atop_name2, 
+                    int nthr, int ithr)
+{
+    barr.wait();
+
+    const auto atop_names = atop_name1 + ", " + atop_name2;
+
+    meas_barr(atop1, atop2, atop_names, nthr, ithr, "barr_shared");
+
+    meas_barr(atop1, atop2, atop_names, nthr, ithr, "barr_notshared");
+
+    meas_barr(atop1, atop2, atop_names, nthr, ithr, "nobarr_shared");
+
+    meas_barr(atop1, atop2, atop_names, nthr, ithr, "nobarr_notshared");
+}
+
+///////////////////////////////////////////////////////////
+//                 Init, output
+///////////////////////////////////////////////////////////
+
+// init_data: Initialize test arrays and buffers
+void init_data()
+{
+    for (auto i = 0; i < nthr_glob; i++) {
         atarr[i].atvar = atvar_def;
         exptd[i].var = exptd_def;
         des[i].var = des_def;
@@ -807,8 +868,8 @@ void output_global()
 
             ofile.close();
 
-        } else if ((test_type == "array_shared") ||
-                   (test_type == "array_notshared")) {
+        } else if ((test_type == "buf_shared") ||
+                   (test_type == "buf_notshared")) {
 
             std::string fname = "data/" + test_type + "-" 
                                 + atop_name + "-nthr"  
@@ -817,6 +878,17 @@ void output_global()
             std::fstream ofile(fname, std::fstream::out | std::fstream::app);
 
             ofile << stride << "\t" << avgtime << std::endl;
+
+            ofile.close();
+        } else if ((test_type == "barr_shared") ||
+                   (test_type == "barr_notshared")) {
+
+            std::string fname = "data/" + test_type +
+                                "-nthr" + std::to_string(nthr) + ".dat";
+
+            std::fstream ofile(fname, std::fstream::out | std::fstream::app);
+
+            ofile << atop_name << "\t" << avgtime << std::endl;
 
             ofile.close();
         }
@@ -834,16 +906,14 @@ int main(int argc, const char *argv[])
         {"CAS", CAS}, {"unCAS", unCAS}, {"SWAP", SWAP}, 
         {"FAA", FAA}, {"load", load}, {"store", store}};
 
-    alloc_mem(
-        std::max(*std::max_element(delay_nthr.begin(), 
-                                   delay_nthr.end()), nthr_max),
-        nthr_max);
+    init_data();
 
 #ifdef CONT_MEAS_ENABLE
     // Contention measurements for different thread number
     std::cout << "-------------------------------------" << std::endl;
     std::cout << "CONTENTION MEASUREMENTS\n";
     std::cout << "-------------------------------------" << std::endl;
+
     for (auto nthr = nthr_min; nthr <= nthr_max; nthr += nthr_step) {
 
         std::cout << "Number of threads: " << nthr << std::endl;
@@ -976,7 +1046,55 @@ int main(int argc, const char *argv[])
     }
 #endif
 
-    //free_mem();
+#ifdef BARRIER_MEAS_ENABLE
+    std::vector<atop_vec_elem_t> atops_barr_op1{
+        {"CAS", CAS}, {"SWAP", SWAP}, 
+        {"FAA", FAA}, {"store", store}};
+
+    std::vector<atop_vec_elem_t> atops_barr_op2{
+        {"CAS", CAS}, {"SWAP", SWAP}, 
+        {"FAA", FAA}, {"load", load}};
+
+    std::cout << "-------------------------------------" << std::endl;
+    std::cout << "BARRIER (RELAXATION) MEASUREMENTS\n";
+    std::cout << "-------------------------------------" << std::endl;
+
+    for (auto nthr = nthr_min; nthr <= nthr_max; nthr += nthr_step) {
+
+        std::cout << "Number of threads: " << nthr << std::endl;
+        barr.init(nthr);
+
+        for (auto &atop_item1: atops_barr_op1) {
+            for (auto &atop_item2: atops_barr_op2) {
+
+                std::string atop_name1 = atop_item1.first;
+                void (*atop1)(int) = atop_item1.second;
+
+                std::string atop_name2 = atop_item2.first;
+                void (*atop2)(int) = atop_item2.second;
+
+                std::cout << atop_name1 << " >> " << atop_name2 << std::endl;
+
+                std::vector<std::thread> meas_threads;
+
+                // Launch measurement threads
+                for (auto ithr = 0; ithr < nthr; ithr++) {
+                    std::thread thr(make_barr_meas, atop1, atop2, 
+                                    atop_name1, atop_name2,
+                                    nthr, ithr);
+                    set_affinity_by_tid(thr, ithr);
+                    meas_threads.emplace_back(std::move(thr));
+                }
+
+                for (auto &thr: meas_threads) {
+                    thr.join();
+                }
+            }
+        }
+
+        output_global();
+    }
+#endif
 
     return 0;
 }
