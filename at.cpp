@@ -191,6 +191,49 @@ inline void store_arr(int ithr, int ind)
     atbuf[ithr][ind].store(des[ithr].var);
 }
 
+///////////////////////////////////////////////////////////
+//                 Atomic operations (barrier)
+///////////////////////////////////////////////////////////
+
+// CAS: successful CAS
+inline void CAS_barr(int ithr)
+{
+    atarr[ithr].atvar.compare_exchange_weak(exptd[ithr].var, des[ithr].var,
+                                            std::memory_order_relaxed,
+                                            std::memory_order_relaxed);
+}
+
+// unCAS: unsuccessful CAS
+inline void unCAS_barr(int ithr)
+{
+    atarr[ithr].atvar.compare_exchange_weak(des[ithr].var, des2[ithr].var,
+                                            std::memory_order_relaxed,
+                                            std::memory_order_relaxed);
+}
+
+inline void SWAP_barr(int ithr)
+{
+    loaded[ithr].var = atarr[ithr].atvar.exchange(des[ithr].var,
+                                                  std::memory_order_relaxed);
+}
+
+inline void FAA_barr(int ithr)
+{
+    atarr[ithr].atvar.fetch_add(1, std::memory_order_relaxed);
+}
+
+inline void load_barr(int ithr)
+{
+    loaded[ithr].var = atarr[ithr].atvar.load(std::memory_order_relaxed);
+}
+
+inline void store_barr(int ithr)
+{
+    atarr[ithr].atvar.store(des[ithr].var, std::memory_order_relaxed);
+}
+
+///////////////////////////////////////////////////////////
+
 std::random_device rd;
 std::mt19937 gen(rd());
 
@@ -701,22 +744,15 @@ void meas_barr(void (*atop1)(int), void (*atop2)(int),
         auto elapsed = std::chrono::duration_cast
              <time_units>(end - start).count();
         sumtime += elapsed;
-
-        // Strange, but calling a function (instead for-loop) decreases 
-        // the latency of atomic operations, making it equal for all delays
-        // dodelay(delay);
-
-        // Loop making a delay
-        // for (auto j = 0; j < delay; j++);
     }
     
     const auto stride = 0;
     const auto delay = 0;
 
     if (test_type == "barr_shared") 
-        output(sumtime, atop_names, "YBS", nthr, ithr, delay, stride, test_type);
+       output(sumtime, atop_names, "YBS", nthr, ithr, delay, stride, test_type);
     else if (test_type == "barr_notshared") 
-        output(sumtime, atop_names, "YBN", nthr, ithr, delay, stride, test_type);
+       output(sumtime, atop_names, "YBN", nthr, ithr, delay, stride, test_type);
 }
 
 // meas_nobarr: Measure barrier impact
@@ -745,22 +781,15 @@ void meas_nobarr(void (*atop1)(int), void (*atop2)(int),
         auto elapsed = std::chrono::duration_cast
              <time_units>(end - start).count();
         sumtime += elapsed;
-
-        // Strange, but calling a function (instead for-loop) decreases 
-        // the latency of atomic operations, making it equal for all delays
-        // dodelay(delay);
-
-        // Loop making a delay
-        // for (auto j = 0; j < delay; j++);
     }
     
     const auto stride = 0;
     const auto delay = 0;
 
     if (test_type == "nobarr_shared") 
-        output(sumtime, atop_names, "NBS", nthr, ithr, delay, stride, test_type);
+       output(sumtime, atop_names, "NBS", nthr, ithr, delay, stride, test_type);
     else if (test_type == "nobarr_notshared") 
-        output(sumtime, atop_names, "NBN", nthr, ithr, delay, stride, test_type);
+       output(sumtime, atop_names, "NBN", nthr, ithr, delay, stride, test_type);
 }
 
 // make_barr_meas: Experiments for barrier measurements
@@ -777,9 +806,9 @@ void make_barr_meas(void (*atop1)(int), void (*atop2)(int),
 
     meas_barr(atop1, atop2, atop_names, nthr, ithr, "barr_notshared");
 
-    meas_barr(atop1, atop2, atop_names, nthr, ithr, "nobarr_shared");
+    meas_nobarr(atop1, atop2, atop_names, nthr, ithr, "nobarr_shared");
 
-    meas_barr(atop1, atop2, atop_names, nthr, ithr, "nobarr_notshared");
+    meas_nobarr(atop1, atop2, atop_names, nthr, ithr, "nobarr_notshared");
 }
 
 ///////////////////////////////////////////////////////////
@@ -881,7 +910,9 @@ void output_global()
 
             ofile.close();
         } else if ((test_type == "barr_shared") ||
-                   (test_type == "barr_notshared")) {
+                   (test_type == "barr_notshared") ||
+                   (test_type == "nobarr_shared") ||
+                   (test_type == "nobarr_notshared")) {
 
             std::string fname = "data/" + test_type +
                                 "-nthr" + std::to_string(nthr) + ".dat";
@@ -1048,12 +1079,12 @@ int main(int argc, const char *argv[])
 
 #ifdef BARRIER_MEAS_ENABLE
     std::vector<atop_vec_elem_t> atops_barr_op1{
-        {"CAS", CAS}, {"SWAP", SWAP}, 
-        {"FAA", FAA}, {"store", store}};
+        {"CAS", CAS_barr}, {"SWAP", SWAP_barr}, 
+        {"FAA", FAA_barr}, {"store", store_barr}};
 
     std::vector<atop_vec_elem_t> atops_barr_op2{
-        {"CAS", CAS}, {"SWAP", SWAP}, 
-        {"FAA", FAA}, {"load", load}};
+        {"CAS", CAS_barr}, {"SWAP", SWAP_barr}, 
+        {"FAA", FAA_barr}, {"load", load_barr}};
 
     std::cout << "-------------------------------------" << std::endl;
     std::cout << "BARRIER (RELAXATION) MEASUREMENTS\n";
